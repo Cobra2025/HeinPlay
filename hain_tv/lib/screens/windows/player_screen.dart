@@ -1926,7 +1926,12 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
           // 进入全屏前必须先恢复普通标题栏，否则 window_manager 在 is_frameless_
           // 为 true 时不会执行实际全屏 resize。
           await windowManager.setTitleBarStyle(TitleBarStyle.normal);
-          await windowManager.setFullScreen(true);
+          if (DeviceUtils.isWindows) {
+            // Windows 使用 Win32 原生真全屏，任务栏自动隐藏。
+            await WindowsWindowUtils.setNativeFullScreen(true);
+          } else {
+            await windowManager.setFullScreen(true);
+          }
           setWindowsFullScreenState(true);
         } else if (_isValidNormalBounds(_previousWindowBounds)) {
           await windowManager.setBounds(_previousWindowBounds!);
@@ -1966,9 +1971,9 @@ class _WindowsPlayerScreenState extends State<WindowsPlayerScreen>
         }
         // 保存当前窗口尺寸、位置和标题栏样式。
         // 每次进入小窗都刷新保存的边界，避免使用过期尺寸导致恢复后窗口变小。
-        // 以插件的 isFullScreen 为准排除全屏状态；若插件报告非全屏但边界接近
-        // 屏幕尺寸（可能是手动最大化），则放弃保存，恢复时使用默认居中窗口。
-        final isPluginFullscreen = await windowManager.isFullScreen();
+        // 以真实全屏状态为准排除全屏状态（Windows 为 Win32 原生状态，Linux 为插件状态）；
+        // 若非全屏但边界接近屏幕尺寸（可能是手动最大化），则放弃保存，恢复时使用默认居中窗口。
+        final isPluginFullscreen = await queryDesktopFullScreen();
         final bounds = await windowManager.getBounds();
         if (!isPluginFullscreen &&
             _isValidNormalBounds(bounds) &&

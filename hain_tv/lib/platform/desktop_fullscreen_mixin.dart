@@ -57,6 +57,30 @@ mixin DesktopFullscreenMixin<T extends StatefulWidget> on State<T>
     await syncWindowsFullscreenState();
   }
 
+  /// 统一查询当前桌面端真实全屏状态。
+  ///
+  /// Windows 上以 [WindowsWindowUtils.isNativeFullScreen]（Win32 原生真全屏）
+  /// 为准：window_manager 的 setFullScreen 在标题栏样式/DPI 缩放场景下不可靠，
+  /// 已被原生实现取代；Linux 上仍使用插件的 [windowManager.isFullScreen]。
+  Future<bool> queryDesktopFullScreen() async {
+    if (!DeviceUtils.isDesktop) return false;
+    if (DeviceUtils.isWindows) return WindowsWindowUtils.isNativeFullScreen;
+    try {
+      return await windowManager.isFullScreen();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Windows/桌面端进入原生真全屏（仅 Windows 生效，Linux 走插件）。
+  Future<bool> _setDesktopFullScreen(bool value) async {
+    if (DeviceUtils.isWindows) {
+      return WindowsWindowUtils.setNativeFullScreen(value);
+    }
+    await windowManager.setFullScreen(value);
+    return true;
+  }
+
   /// 同步本地全屏状态。
   ///
   /// 优先使用 [windowManager.isFullScreen]（插件内部状态），仅当插件报告全屏但
@@ -64,7 +88,7 @@ mixin DesktopFullscreenMixin<T extends StatefulWidget> on State<T>
   Future<void> syncWindowsFullscreenState() async {
     if (!DeviceUtils.isDesktop || !mounted) return;
     try {
-      final pluginState = await windowManager.isFullScreen();
+      final pluginState = await queryDesktopFullScreen();
       var actualState = pluginState;
       if (pluginState) {
         final bounds = await windowManager.getBounds();
@@ -146,7 +170,7 @@ mixin DesktopFullscreenMixin<T extends StatefulWidget> on State<T>
     }
     _togglingFullScreen = true;
     try {
-      final pluginFullScreen = await windowManager.isFullScreen();
+      final pluginFullScreen = await queryDesktopFullScreen();
       final next = !pluginFullScreen;
       debugPrint(
         '桌面端 切换全屏: plugin=$pluginFullScreen local=$_isFullScreen next=$next',
@@ -184,7 +208,10 @@ mixin DesktopFullscreenMixin<T extends StatefulWidget> on State<T>
         await Future.delayed(const Duration(milliseconds: 50));
       }
 
-      await windowManager.setFullScreen(next);
+      // Windows：Win32 原生真全屏（WS_POPUP + 精确铺满显示器物理像素 + 置顶），
+      // 系统 Shell 识别为全屏窗口后自动隐藏任务栏，且不受 DPI 缩放影响。
+      // Linux：仍使用 window_manager 的 setFullScreen。
+      await _setDesktopFullScreen(next);
 
       // 根据用户设置同步置顶状态
       final alwaysOnTop = await UserDataService.getWindowsFullscreenAlwaysOnTop();
@@ -262,7 +289,7 @@ mixin DesktopFullscreenMixin<T extends StatefulWidget> on State<T>
     if (_togglingFullScreen) return;
     _togglingFullScreen = true;
     try {
-      final pluginFullScreen = await windowManager.isFullScreen();
+      final pluginFullScreen = await queryDesktopFullScreen();
       debugPrint('桌面端 ESC: plugin=$pluginFullScreen local=$_isFullScreen');
       // 已确认是环境强制全屏（游戏模式）→ 全屏撤不掉，直接走返回，不再空转窗口操作。
       if (DeviceUtils.envForcedFullScreen) {
@@ -271,7 +298,7 @@ mixin DesktopFullscreenMixin<T extends StatefulWidget> on State<T>
         return;
       }
       if (pluginFullScreen) {
-        await windowManager.setFullScreen(false);
+        await _setDesktopFullScreen(false);
         // 退出全屏后恢复窗口尺寸限制，避免仍处于小窗的限制状态。
         await windowManager.setMaximumSize(_kUnboundedSize);
         await windowManager.setMinimumSize(const Size(320, 180));
@@ -318,7 +345,9 @@ mixin DesktopFullscreenMixin<T extends StatefulWidget> on State<T>
         // 因此把该事实记为全局状态（此后所有决策忽略全屏），并在**本次按键内**继续执行返回。
         var stillFullScreen = false;
         try {
-          stillFullScreen = await windowManager.isFullScreen();
+          stillFullScreen = DeviceUtils.isWindows
+              ? WindowsWindowUtils.isNativeFullScreen
+              : await windowManager.isFullScreen();
         } catch (_) {
           stillFullScreen = false;
         }
